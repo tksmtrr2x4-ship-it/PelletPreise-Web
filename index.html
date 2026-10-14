@@ -99,10 +99,19 @@ if (!db.seeded) { upsert('2026-10-14','Wahr Energie',449.29,53.51,'manuell'); db
 // ---- Abruf (über server.mjs)
 async function fetchProvider(p) {
   const go = async () => {
-    const r = await fetch('/api/fetch?provider=' + p.kind);
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || `Server-Fehler (HTTP ${r.status})`);
-    return j;
+    // Läuft die Seite nicht über server.mjs (z. B. anderer Static-Server / file://), direkt den lokalen Server auf Port 3000 ansprechen
+    const bases = location.port === '3000' ? [''] : ['', 'http://localhost:3000'];
+    let last;
+    for (const b of bases) {
+      try {
+        const r = await fetch(b + '/api/fetch?provider=' + p.kind);
+        const j = await r.json().catch(() => null);
+        if (r.ok && j) return j;
+        if (j?.error) throw new Error(j.error);       // echte Antwort von server.mjs
+        last = new Error(`Seite läuft nicht über server.mjs (HTTP ${r.status})`);
+      } catch (e) { if (e.message && !(e instanceof TypeError)) { last = e; if (!/server\.mjs/.test(e.message)) break; } else last = e; }
+    }
+    throw last;
   };
   let q;
   try { q = await go(); } catch (e) { await new Promise(r => setTimeout(r, 2000)); q = await go(); }
@@ -123,7 +132,7 @@ async function refresh(force) {
       upsert(todayStr(), p.name, q.price, q.delivery, 'auto');
       db.statuses[p.name] = { date: Date.now(), ok: true, message: 'OK' };
     } catch (e) {
-      const msg = e instanceof TypeError ? 'Server nicht erreichbar (npm start?)' : e.message;
+      const msg = e instanceof TypeError ? 'Server nicht erreichbar – bitte im Ordner "node server.mjs" starten und http://localhost:3000 öffnen' : e.message;
       db.statuses[p.name] = { date: Date.now(), ok: false, message: msg };
     }
   }));

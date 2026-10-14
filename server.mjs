@@ -103,7 +103,7 @@ const types = { '.html': 'text/html; charset=utf-8', '.json': 'application/json'
 
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
-  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify(obj)); };
   if (url.pathname === '/api/fetch') {
     const fn = providers[url.searchParams.get('provider')];
     if (!fn) return json(404, { error: 'Unbekannter Anbieter' });
