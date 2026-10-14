@@ -135,6 +135,7 @@ async function loadStatic() {
       if (!ex || ex.source !== 'manuell') upsert(e.day, e.provider, e.pricePerTon, e.delivery, 'auto', e.tons);
     }
     Object.assign(db.statuses, j.statuses || {});
+    db.dataUpdated = j.updated;
     return true;
   } catch { return false; }
 }
@@ -174,6 +175,7 @@ function render() {
   $('btnRefresh').disabled = loading; $('btnRefresh').textContent = loading ? 'Lädt …' : 'Abrufen';
   const failed = Object.values(db.statuses).some(s => !s.ok);
   $('sub').innerHTML = `${CONFIG.tons} t nach ${CONFIG.plz} · Preise inkl. MwSt.` +
+    (!HAS_API && db.dataUpdated ? ` · Stand ${new Date(db.dataUpdated).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'})} (stündlich aktualisiert)` : '') +
     (failed ? ` <span class="warnbox">⚠ Mindestens ein Abruf ist fehlgeschlagen – Details unten.</span>` : '');
   const L = latest();
   $('cChart').hidden = $('cPrices').hidden = !L.length;

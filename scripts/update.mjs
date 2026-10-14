@@ -8,6 +8,8 @@ const day = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Berlin' }
 
 let data = { entries: [], statuses: {} };
 try { data = JSON.parse(await fs.readFile(file, 'utf8')); } catch {}
+const sig = d => JSON.stringify([d.entries, Object.entries(d.statuses).map(([k, v]) => [k, v.ok, v.message])]);
+const before = sig(data);
 
 for (const [name, fn] of Object.entries(providers)) {
   try {
@@ -25,7 +27,9 @@ for (const [name, fn] of Object.entries(providers)) {
     console.error(name, 'FEHLER:', err.message);
   }
 }
+const changed = sig(data) !== before;
 data.entries.sort((a, b) => a.day.localeCompare(b.day) || a.provider.localeCompare(b.provider));
+if (!changed && data.updated) process.exit(0);   // kein Commit-Rauschen bei unveränderten Preisen
 data.updated = new Date().toISOString();
 await fs.mkdir(new URL('../data/', import.meta.url), { recursive: true });
 await fs.writeFile(file, JSON.stringify(data, null, 2) + '\n');
