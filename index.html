@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pelletpreise</title>
+<style>
+:root{--bg:#f4f1ea;--card:#fff;--ink:#1d2a2e;--mute:#6b7478;--line:#e2ddd2;--accent:#1f6f78;--best:#2e9d57;--bar:#4a7fb0;--warn:#c76a00;--err:#c0392b}
+@media (prefers-color-scheme:dark){:root{--bg:#14191b;--card:#1d2427;--ink:#e8ecec;--mute:#93a0a3;--line:#2c373a;--accent:#5bb8c2;--best:#4cc57c;--bar:#6ea3d4;--warn:#f0a040;--err:#ef6b5c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,system-ui,sans-serif}
+main{max-width:760px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:0 0 10px}
+header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px}
+header .sp{flex:1}
+.sub{color:var(--mute);margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+button,select,input{font:inherit;color:var(--ink)}
+button{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.5;cursor:default}
+input,select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%}
+.row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row .l{min-width:0}.row .r{text-align:right;white-space:nowrap}
+.small{font-size:12.5px;color:var(--mute)}.stale{color:var(--warn)}.ok{color:var(--best)}.bad{color:var(--err)}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+svg{width:100%;height:auto;display:block}
+svg text{fill:var(--ink);font-size:12px}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}
+.x{float:right;border:0;background:none;color:var(--mute);padding:0 4px}
+.warnbox{color:var(--warn);font-size:13px;margin-top:6px}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Pelletpreise</h1><span class="sp"></span>
+  <button id="btnRefresh" class="primary">Abrufen</button>
+  <button id="btnExport">Export JSON</button>
+  <button id="btnImport">Import JSON</button>
+  <input id="file" type="file" accept="application/json,.json" hidden>
+</header>
+<p class="sub" id="sub"></p>
+
+<section class="card" id="cChart" hidden><h2>Gesamtkosten inkl. Lieferung</h2><div id="bars"></div></section>
+<section class="card" id="cPrices" hidden><h2>Letzter Stand je Anbieter</h2><div id="prices"></div></section>
+
+<section class="card">
+  <h2>Preis eintragen</h2>
+  <div class="form">
+    <select id="mProv"></select>
+    <input id="mPrice" inputmode="decimal" placeholder="Preis je Tonne in € (449,29)">
+    <input id="mDel" inputmode="decimal" placeholder="Lieferung gesamt in € (optional)">
+    <input id="mDay" type="date">
+  </div>
+  <p class="small" id="mHint"></p>
+  <button id="mSave" class="primary">Sichern</button>
+</section>
+
+<section class="card"><h2>Abruf-Status</h2><div id="status"></div></section>
+<section class="card" id="cHist" hidden><h2>Verlauf Gesamtkosten</h2><div id="line"></div><div class="legend" id="legend"></div></section>
+<section class="card"><h2>Archiv</h2><div id="archive"></div></section>
+</main>
+
+<script>
+const CONFIG = { plz:'78056', tons:3, plausiblePrice:[150,1500], plausibleDelivery:[0,300] };
+const PROVIDERS = [
+  { name:'Bestwood Pellets', fav:true, kind:'bestwood' },
+  { name:'Schellinger KG', fav:true, kind:'schellinger' },
+  { name:'Wahr Energie', fav:true, kind:'wahr' },
+  { name:'Wohl und Warm (Dotternhausen)', fav:true },
+  { name:'Heizpellets24' }, { name:'Westerwälder Holzpellets' }, { name:'BayWa' },
+];
+const AUTO = PROVIDERS.filter(p => p.kind);
+const KEY = 'pelletpreise.v1';
+const $ = id => document.getElementById(id);
+const eur = (v, d=2) => v.toLocaleString('de-DE', { style:'currency', currency:'EUR', minimumFractionDigits:d, maximumFractionDigits:d });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const parseNum = s => { const n = Number(String(s).trim().replace(/\./g,'').replace(',','.')); return s.trim() && Number.isFinite(n) ? n : null; };
+const fmtDay = d => { const [y,m,dd] = d.split('-'); return `${dd}.${m}.${y}`; };
+const total = e => e.pricePerTon * e.tons + e.delivery;
+const inRange = (v, [a,b]) => v >= a && v <= b;
+
+// ---- Speicher
+let db = { entries: [], statuses: {}, seeded: false };
+try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.entries)) db = { entries:s.entries, statuses:s.statuses||{}, seeded:!!s.seeded }; } catch {}
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch { alert('Speichern im Browser fehlgeschlagen – bitte JSON exportieren.'); } };
+
+function upsert(day, provider, pricePerTon, delivery, source, tons = CONFIG.tons) {
+  const e = db.entries.find(x => x.day === day && x.provider === provider);
+  if (e) Object.assign(e, { pricePerTon, delivery, source, tons });
+  else db.entries.push({ day, provider, pricePerTon, delivery, tons, source });
+}
+if (!db.seeded) { upsert('2026-10-14','Wahr Energie',449.29,53.51,'manuell'); db.seeded = true; save(); }
+
+// ---- Abruf (über server.mjs)
+async function fetchProvider(p) {
+  const go = async () => {
+    const r = await fetch('/api/fetch?provider=' + p.kind);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `Server-Fehler (HTTP ${r.status})`);
+    return j;
+  };
+  let q;
+  try { q = await go(); } catch (e) { await new Promise(r => setTimeout(r, 2000)); q = await go(); }
+  if (!inRange(q.price, CONFIG.plausiblePrice)) throw new Error(`Unplausibler Wert: ${q.price} €/t`);
+  if (!inRange(q.delivery, CONFIG.plausibleDelivery)) throw new Error(`Unplausibler Wert: Lieferung ${q.delivery} €`);
+  return q;
+}
+function needsRefresh() {
+  return AUTO.some(p => { const s = db.statuses[p.name]; return !s || Date.now() - s.date > (s.ok ? 6*3600e3 : 15*60e3); });
+}
+let loading = false;
+async function refresh(force) {
+  if (loading || (!force && !needsRefresh())) return;
+  loading = true; render();
+  await Promise.all(AUTO.map(async p => {
+    try {
+      const q = await fetchProvider(p);
+      upsert(todayStr(), p.name, q.price, q.delivery, 'auto');
+      db.statuses[p.name] = { date: Date.now(), ok: true, message: 'OK' };
+    } catch (e) {
+      const msg = e instanceof TypeError ? 'Server nicht erreichbar (npm start?)' : e.message;
+      db.statuses[p.name] = { date: Date.now(), ok: false, message: msg };
+    }
+  }));
+  save(); loading = false; render();
+}
+
+// ---- Ansicht
+const COLORS = ['#4a7fb0','#e07b39','#8e5fb5','#c9a227','#d05a7a','#3aa0a0','#7a8a3a'];
+const colorOf = n => COLORS[PROVIDERS.findIndex(p => p.name === n) % COLORS.length] || COLORS[0];
+const isFav = n => PROVIDERS.find(p => p.name === n)?.fav;
+
+function latest() {
+  const m = new Map();
+  for (const e of db.entries) if (!m.has(e.provider) || m.get(e.provider).day < e.day) m.set(e.provider, e);
+  return [...m.values()].sort((a,b) => total(a) - total(b));
+}
+function render() {
+  $('btnRefresh').disabled = loading; $('btnRefresh').textContent = loading ? 'Lädt …' : 'Abrufen';
+  const failed = Object.values(db.statuses).some(s => !s.ok);
+  $('sub').innerHTML = `${CONFIG.tons} t nach ${CONFIG.plz} · Preise inkl. MwSt.` +
+    (failed ? ` <span class="warnbox">⚠ Mindestens ein Abruf ist fehlgeschlagen – Details unten.</span>` : '');
+  const L = latest();
+  $('cChart').hidden = $('cPrices').hidden = !L.length;
+  const max = Math.max(...L.map(total), 1) * 1.25, H = 40;
+  $('bars').innerHTML = `<svg viewBox="0 0 640 ${L.length*H+4}">` + L.map((e,i) => {
+    const w = Math.max(2, total(e)/max*400), y = i*H+4;
+    return `<text x="0" y="${y+22}">${esc(e.provider.length>24?e.provider.slice(0,23)+'…':e.provider)}</text>
+      <rect x="190" y="${y+6}" width="${w}" height="24" rx="4" fill="${i===0?'var(--best)':'var(--bar)'}"/>
+      <text x="${190+w+6}" y="${y+23}">${eur(total(e),0)}</text>`;
+  }).join('') + '</svg>';
+  const today = todayStr();
+  $('prices').innerHTML = L.map(e => {
+    const stale = e.day !== today;
+    return `<div class="row"><div class="l"><b>${isFav(e.provider)?'★ ':''}${esc(e.provider)}</b>
+      <div class="small ${stale?'stale':''}">${eur(e.pricePerTon)} je Tonne${e.delivery>0?` · Lieferung ${eur(e.delivery)}`:''} · ${fmtDay(e.day)}${stale?' ⏱':''}</div></div>
+      <div class="r"><b>${eur(total(e))}</b></div></div>`;
+  }).join('');
+  const have = new Set(L.map(e => e.provider));
+  const none = PROVIDERS.filter(p => !have.has(p.name));
+  $('status').innerHTML = AUTO.map(p => {
+    const s = db.statuses[p.name];
+    const t = s ? new Date(s.date).toLocaleString('de-DE',{dateStyle:'medium',timeStyle:'short'}) : '';
+    return `<div class="row"><div class="l"><span class="${s?(s.ok?'ok':'bad'):'small'}">${s?(s.ok?'✓':'✕'):'○'}</span> ${esc(p.name)}
+      <div class="small ${s&&!s.ok?'bad':''}">${s?(s.ok?'Abgerufen '+t:'Fehler: '+esc(s.message)+' ('+t+')'):'Noch nicht abgerufen'}</div></div></div>`;
+  }).join('') + PROVIDERS.filter(p => !p.kind).map(p =>
+    `<div class="row"><div class="l">☝ ${esc(p.name)}</div><div class="r small">manuell${have.has(p.name)?'':' · noch ohne Preis'}</div></div>`).join('');
+  renderHistory();
+}
+function renderHistory() {
+  const days = [...new Set(db.entries.map(e => e.day))].sort();
+  $('cHist').hidden = days.length < 2;
+  if (days.length > 1) {
+    const vals = db.entries.map(total), lo = Math.min(...vals), hi = Math.max(...vals), span = (hi-lo)||1;
+    const W = 640, H = 240, px = 56, py = 16, X = d => px + (days.indexOf(d)/(days.length-1))*(W-px-16), Y = v => H-24-((v-lo)/span)*(H-24-py);
+    const names = [...new Set(db.entries.map(e => e.provider))];
+    let svg = `<svg viewBox="0 0 ${W} ${H}">`;
+    for (let i=0;i<=3;i++){ const v = lo+span*i/3, y = Y(v); svg += `<line x1="${px}" x2="${W-16}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="0" y="${y+4}">${eur(v,0)}</text>`; }
+    const step = Math.ceil(days.length/6);
+    days.forEach((d,i) => { if (i%step===0) svg += `<text x="${X(d)}" y="${H-6}" text-anchor="middle">${fmtDay(d).slice(0,5)}</text>`; });
+    for (const n of names) {
+      const pts = db.entries.filter(e => e.provider===n).sort((a,b)=>a.day.localeCompare(b.day));
+      svg += `<polyline fill="none" stroke="${colorOf(n)}" stroke-width="2" points="${pts.map(e=>X(e.day)+','+Y(total(e))).join(' ')}"/>` +
+        pts.map(e=>`<circle cx="${X(e.day)}" cy="${Y(total(e))}" r="3.5" fill="${colorOf(n)}"><title>${esc(n)} ${fmtDay(e.day)}: ${eur(total(e))}</title></circle>`).join('');
+    }
+    $('line').innerHTML = svg + '</svg>';
+    $('legend').innerHTML = names.map(n => `<span><i style="background:${colorOf(n)}"></i>${esc(n)}</span>`).join('');
+  }
+  const ds = days.slice().reverse();
+  $('archive').innerHTML = ds.length ? ds.map(d => `<div class="small" style="margin-top:10px"><b>${fmtDay(d)}</b></div>` +
+    db.entries.filter(e => e.day===d).sort((a,b)=>total(a)-total(b)).map(e =>
+      `<div class="row"><div class="l">${esc(e.provider)}<div class="small">${eur(e.pricePerTon)} / t · ${esc(e.source)}</div></div>
+       <div class="r"><b>${eur(total(e))}</b><button class="x" data-del="${esc(e.day)}|${esc(e.provider)}" title="Löschen">✕</button></div></div>`).join('')).join('')
+    : '<p class="small">Noch keine Einträge.</p>';
+}
+
+// ---- Manuelle Eingabe
+$('mProv').innerHTML = PROVIDERS.map(p => `<option>${esc(p.name)}</option>`).join('');
+$('mProv').value = PROVIDERS.find(p => !p.kind).name;
+$('mDay').value = todayStr();
+$('mSave').onclick = () => {
+  const price = parseNum($('mPrice').value), del = parseNum($('mDel').value) ?? 0;
+  if (price == null || !inRange(price, CONFIG.plausiblePrice)) { $('mHint').className='small stale'; $('mHint').textContent = `Preis wirkt unplausibel (erwartet ${CONFIG.plausiblePrice[0]}–${CONFIG.plausiblePrice[1]} €/t).`; return; }
+  if (!inRange(del, CONFIG.plausibleDelivery)) { $('mHint').className='small stale'; $('mHint').textContent = 'Lieferkosten wirken unplausibel.'; return; }
+  upsert($('mDay').value || todayStr(), $('mProv').value, price, del, 'manuell');
+  save(); $('mPrice').value = $('mDel').value = ''; $('mHint').textContent = ''; render();
+};
+$('archive').onclick = e => {
+  const k = e.target.dataset?.del; if (!k) return;
+  const [day, prov] = k.split('|');
+  db.entries = db.entries.filter(x => !(x.day===day && x.provider===prov)); save(); render();
+};
+$('btnRefresh').onclick = () => refresh(true);
+
+// ---- JSON Export / Import
+$('btnExport').onclick = () => {
+  const out = { app:'pelletpreise', version:1, exportedAt:new Date().toISOString(),
+    config:{ plz:CONFIG.plz, tons:CONFIG.tons }, entries:db.entries, statuses:db.statuses };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out,null,2)], { type:'application/json' }));
+  a.download = `pelletpreise-${todayStr()}.json`; a.click(); URL.revokeObjectURL(a.href);
+};
+$('btnImport').onclick = () => $('file').click();
+$('file').onchange = async () => {
+  const f = $('file').files[0]; $('file').value = ''; if (!f) return;
+  try {
+    const j = JSON.parse(await f.text());
+    const list = Array.isArray(j) ? j : j.entries;
+    if (!Array.isArray(list)) throw new Error('Keine Einträge gefunden');
+    const ok = list.filter(e => e && /^\d{4}-\d{2}-\d{2}$/.test(e.day) && typeof e.provider==='string' &&
+      Number.isFinite(e.pricePerTon) && Number.isFinite(e.delivery ?? 0));
+    if (!ok.length) throw new Error('Keine gültigen Einträge');
+    const replace = confirm(`${ok.length} Einträge gefunden.\n\nOK = mit vorhandenen Daten zusammenführen\nAbbrechen = nichts ändern`);
+    if (!replace) return;
+    for (const e of ok) upsert(e.day, e.provider, e.pricePerTon, e.delivery ?? 0, e.source || 'import', e.tons || CONFIG.tons);
+    save(); render(); alert(`${ok.length} Einträge importiert.`);
+  } catch (err) { alert('Import fehlgeschlagen: ' + err.message); }
+};
+
+render();
+refresh(false);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(false); });
+</script>
+</body>
+</html>
