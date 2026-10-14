@@ -123,19 +123,40 @@ function needsRefresh() {
   return AUTO.some(p => { const s = db.statuses[p.name]; return !s || Date.now() - s.date > (s.ok ? 6*3600e3 : 15*60e3); });
 }
 let loading = false;
-async function refresh(force) {
-  if (loading || (!force && !needsRefresh())) return;
-  loading = true; render();
-  await Promise.all(AUTO.map(async p => {
-    try {
-      const q = await fetchProvider(p);
-      upsert(todayStr(), p.name, q.price, q.delivery, 'auto');
-      db.statuses[p.name] = { date: Date.now(), ok: true, message: 'OK' };
-    } catch (e) {
-      const msg = e instanceof TypeError ? 'Server nicht erreichbar – bitte im Ordner "node server.mjs" starten und http://localhost:3000 öffnen' : e.message;
-      db.statuses[p.name] = { date: Date.now(), ok: false, message: msg };
+// Lokal (server.mjs) gibt es einen Live-Abruf; auf GitHub Pages kommen die Preise aus data/prices.json (tägliche Action)
+const HAS_API = ['localhost','127.0.0.1',''].includes(location.hostname);
+async function loadStatic() {
+  try {
+    const r = await fetch('data/prices.json?_=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return false;
+    const j = await r.json();
+    for (const e of j.entries || []) {
+      const ex = db.entries.find(x => x.day === e.day && x.provider === e.provider);
+      if (!ex || ex.source !== 'manuell') upsert(e.day, e.provider, e.pricePerTon, e.delivery, 'auto', e.tons);
     }
-  }));
+    Object.assign(db.statuses, j.statuses || {});
+    return true;
+  } catch { return false; }
+}
+async function refresh(force) {
+  if (loading) return;
+  loading = true; render();
+  const gotStatic = await loadStatic();
+  if (HAS_API && (force || needsRefresh())) {
+    await Promise.all(AUTO.map(async p => {
+      try {
+        const q = await fetchProvider(p);
+        upsert(todayStr(), p.name, q.price, q.delivery, 'auto');
+        db.statuses[p.name] = { date: Date.now(), ok: true, message: 'OK' };
+      } catch (e) {
+        if (gotStatic && db.statuses[p.name]?.ok) return;   // Archiv-Preis bleibt gültig
+        const msg = e instanceof TypeError ? 'Server nicht erreichbar – bitte im Ordner "node server.mjs" starten und http://localhost:3000 öffnen' : e.message;
+        db.statuses[p.name] = { date: Date.now(), ok: false, message: msg };
+      }
+    }));
+  } else if (!gotStatic && !db.entries.some(e => e.source === 'auto')) {
+    AUTO.forEach(p => db.statuses[p.name] = { date: Date.now(), ok: false, message: 'data/prices.json nicht gefunden' });
+  }
   save(); loading = false; render();
 }
 
