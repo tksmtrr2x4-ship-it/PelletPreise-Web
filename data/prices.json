@@ -795,20 +795,20 @@
   ],
   "statuses": {
     "Bestwood Pellets": {
-      "date": 1794733881387,
-      "ok": false,
-      "message": "The operation was aborted due to timeout"
+      "date": 1794761847722,
+      "ok": true,
+      "message": "OK"
     },
     "Schellinger KG": {
-      "date": 1794733883049,
+      "date": 1794761849634,
       "ok": true,
       "message": "OK"
     },
     "Wahr Energie": {
-      "date": 1794733883836,
+      "date": 1794761850535,
       "ok": true,
       "message": "OK"
     }
   },
-  "updated": "2026-11-15T09:11:23.961Z"
+  "updated": "2026-11-15T16:57:30.542Z"
 }
