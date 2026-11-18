@@ -859,28 +859,28 @@
     {
       "day": "2026-11-18",
       "provider": "Wahr Energie",
-      "pricePerTon": 436.21,
-      "delivery": 53.49,
+      "pricePerTon": 428.78,
+      "delivery": 53.5,
       "tons": 3,
       "source": "auto"
     }
   ],
   "statuses": {
     "Bestwood Pellets": {
-      "date": 1795006590365,
+      "date": 1795036779499,
       "ok": true,
       "message": "OK"
     },
     "Schellinger KG": {
-      "date": 1795006591898,
+      "date": 1795036781570,
       "ok": true,
       "message": "OK"
     },
     "Wahr Energie": {
-      "date": 1795006592678,
+      "date": 1795036782396,
       "ok": true,
       "message": "OK"
     }
   },
-  "updated": "2026-11-18T12:56:32.846Z"
+  "updated": "2026-11-18T21:19:42.403Z"
 }
